@@ -4,23 +4,27 @@ defmodule Router.Proxy do
   plug :dispatch
 
   get "/*path" do
-    IO.inspect conn.request_path #Map.keys(conn)
     {:ok, node_list} = Router.Registry.endpoints
-    nodes = Enum.map(node_list, fn(nd) -> Router.Registry.lookup(nd) end)
-    IO.inspect nodes
+    nodes_and_paths  = Enum.map(node_list, fn(nd) -> Router.Registry.lookup(nd) end)
+
     result =
-    case Enum.find(nodes, fn(x) -> elem(x,1) == conn.request_path end) do
-      {nd, ep} -> :rpc.call(nd, Endpoint.Path, :run, [1])
-      _ -> "not found"
+    case Enum.find(nodes_and_paths, fn(x) -> Enum.any?(elem(x,1), fn(x) -> x  == conn.request_path end) end) do
+      {nd, ep} -> forward_request(nd)
+      _ -> [code: 404, message: "request path not found"]
     end
 
-    IO.inspect result
-
-    send_resp(conn, 200, result)
+    send_resp(conn, result[:code], result[:message])
   end
 
   defp match_request(request_path) do
     node_list = Router.Registry.endpoints
+  end
+
+  defp forward_request(remote_node) do
+    case :rpc.call(remote_node, Endpoint.Path, :run, [1]) do
+      {:badrpc, :nodedown} -> [code: 500, message: "There was an internal server error"]
+      result -> [code: 200, message: result]
+    end
   end
 
   #defp paths([], acc), do: acc
