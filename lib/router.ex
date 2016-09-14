@@ -8,7 +8,6 @@ defmodule Router do
 
     # Define workers and child supervisors to be supervised
     children = [
-      # Starts a worker by calling: Router.Worker.start_link(arg1, arg2, arg3)
       worker(Router.Registry, []),
       Plug.Adapters.Cowboy.child_spec(:http, Router.Proxy, [], [port: 4001])
     ]

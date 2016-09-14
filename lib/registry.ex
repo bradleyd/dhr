@@ -18,8 +18,7 @@ defmodule Router.Registry do
   end
 
   def insert(key, payload) do
-    data   = {key, payload}
-    GenServer.call(__MODULE__, {:insert, data})
+    GenServer.call(__MODULE__, {:insert, {key, payload}})
   end
 
   def add_endpoint({key, payload}) do
@@ -75,9 +74,7 @@ defmodule Router.Registry do
   def handle_call({:delete, key}, _from, state) do
     results =
     case :dets.delete(state.name, key) do
-      :ok ->
-        Node.monitor(key, false)
-        :ok
+      :ok -> :ok
       error -> error
     end
     {:reply, results, state}
