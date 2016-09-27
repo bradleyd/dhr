@@ -1,5 +1,6 @@
 defmodule Router.Registry do
   use GenServer
+  require Logger
 
   @table_name :registry
 
@@ -9,20 +10,43 @@ defmodule Router.Registry do
 
   def init(table) do
     :net_kernel.monitor_nodes(true)
-    {:ok, ets}  = :dets.open_file(table, [type: :set])
-    {:ok, %{name: ets}}
+    table = :ets.new(@table_name, [:set, :named_table])
+    {:ok, %{name: table}}
   end
 
   def delete(key) do
     GenServer.call(__MODULE__, {:delete, key})
   end
 
+  def get_path(path) do
+    :ets.match_object(@table_name, {:'$0', %{paths: [path]}})
+  end
+
   def insert(key, payload) do
     GenServer.call(__MODULE__, {:insert, {key, payload}})
   end
 
+  def all do
+    GenServer.call(__MODULE__, :all_endpoints)
+  end
+
+  # we store the path as the key and the value as a list of maps
+  # for example, {"/info", [%{name: :"foo@127.0.0.1", counter: 0}, %{name: :"bar@127.0.0.1", counter: 0}]}
   def add_endpoint({key, payload}) do
-    data   = {key, payload}
+    data = {key, %{paths: payload, counter: 0}}
+    #data =
+    #case :ets.lookup(@table_name, key) do
+    #  [{^key, endpoints}] ->
+    #    # does endpont already exist
+    #     eps =
+    #     case Enum.find(endpoints, fn(ep) -> ep.name == payload.name end) do
+    #       nil -> [ payload | endpoints]
+    #       data -> data
+    #     end
+    #    {key, eps}
+    #  [] -> {key, [payload]}
+    #end
+
     GenServer.call(__MODULE__, {:insert, data})
   end
 
@@ -43,21 +67,25 @@ defmodule Router.Registry do
   end
 
   defp find(table, nil, acc) do
-    next = :dets.first(table)
+    next = :ets.first(table)
     find(table, next, [next|acc])
   end
 
   defp find(table, thing, acc) do
-    next = :dets.next(table, thing)
+    next = :ets.next(table, thing)
     find(table, next, [next|acc])
   end
 
+  def handle_call(:all_endpoints, _from, state) do
+    results = :ets.select(state.name, [{{:"$1", :"$2"}, [], [{{:"$1", :"$2"}}]}])
+    {:reply, results, state}
+  end
   def handle_call({:all}, _from, state) do
     {:reply, find(state.name, nil, []), state}
   end
   def handle_call({:insert, payload}, _from, state) do
     results =
-    case :dets.insert(state.name, payload) do
+    case :ets.insert(state.name, payload) do
       :ok -> {:ok, "inserted"}
       _ -> {:error}
     end
@@ -65,7 +93,7 @@ defmodule Router.Registry do
   end
   def handle_call({:lookup, key}, _from, state) do
     results =
-    case :dets.lookup(state.name, key) do
+    case :ets.lookup(state.name, key) do
       [{^key, token}] -> {key, token}
       [] -> {:error, "not_found"}
     end
@@ -73,16 +101,25 @@ defmodule Router.Registry do
   end
   def handle_call({:delete, key}, _from, state) do
     results =
-    case :dets.delete(state.name, key) do
+    case :ets.delete(state.name, key) do
       :ok -> :ok
       error -> error
     end
     {:reply, results, state}
   end
-
-  def handle_info({:nodedown, node_name}, state) do
+  def handle_call({:update, _key, payload}, _from, state) do
+    modified_client = Map.merge(%{}, payload)
     results =
-    case :dets.delete(state.name, node_name) do
+      case :ets.insert(state.name, modified_client) do
+	true -> {:ok, "inserted"}
+	_ -> {:error}
+      end
+      {:reply, results, state}
+  end
+  def handle_info({:nodedown, node_name}, state) do
+    Logger.warn("node #{node_name} went down")
+    # find where the node is
+    case :ets.delete(state.name, node_name) do
       :ok -> :ok
       error -> error
     end
@@ -90,8 +127,9 @@ defmodule Router.Registry do
     {:noreply, state}
   end
   def handle_info({:nodeup, node_name}, state) do
+    Logger.warn("node #{node_name} is up")
     results =
-    case :dets.insert(state.name, {node_name, []}) do
+    case :ets.insert(state.name, {node_name, []}) do
       :ok -> {:ok, "inserted"}
       _ ->   {:error}
     end

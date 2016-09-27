@@ -1,16 +1,28 @@
 defmodule Router.Proxy do
   use Plug.Router
+  require Logger
+
+  plug Plug.Logger
   plug :match
   plug :dispatch
 
   get "/*path" do
-    {:ok, node_list} = Router.Registry.endpoints
-    nodes_and_paths  = Enum.map(node_list, fn(nd) -> Router.Registry.lookup(nd) end)
+    nodes_and_paths  = Router.Registry.all
+
+    # fetch query params
+    conn = fetch_query_params(conn)
+
+    endpoint =
+    find_path(nodes_and_paths, conn.request_path)
+    |> load_balance
 
     result =
-    case Enum.find(nodes_and_paths, fn(x) -> Enum.any?(elem(x,1), fn(x) -> x  == conn.request_path end) end) do
-      {nd, ep} -> forward_request(nd)
-      _ -> [code: 404, message: "request path not found"]
+    case endpoint do
+      {:error, error_message} ->
+        [code: 404, message: "request path not found, #{error_message}"]
+      {endpoint, data} ->
+        update_counter_for_endpoint(endpoint)
+        forward_request(endpoint, conn.params)
     end
 
     send_resp(conn, result[:code], result[:message])
@@ -20,19 +32,36 @@ defmodule Router.Proxy do
     node_list = Router.Registry.endpoints
   end
 
-  defp forward_request(remote_node) do
-    case :rpc.call(remote_node, Endpoint.Path, :run, [1]) do
+  defp forward_request(remote_node, params) do
+    case :rpc.call(remote_node, Endpoint.Path, :run, [params]) do
       {:badrpc, :nodedown} -> [code: 500, message: "There was an internal server error"]
       result -> [code: 200, message: result]
     end
   end
 
-  #defp paths([], acc), do: acc
-  #def paths([h|t], acc)
-  #defp paths({nd, paths}, request_path) when is_list(paths) do
-  #  case Enum.any?(paths, fn(x) -> request_path == x end) do
-  #    true ->
-  #  end
-  #end
+  defp update_counter_for_endpoint(endpoint) do
+    # make another call just in case counter has changed since last time -- race condition
+    {remote_node, data} = Router.Registry.lookup(endpoint)
+    update              = %{ data | counter: (data.counter + 1) }
+    Router.Registry.insert(remote_node, update)
+  end
 
+  def load_balance([]) do
+    {:error, "no endpoints available"}
+  end
+  def load_balance(endpoints) do
+    Enum.min_by(endpoints, fn({nd, data}) -> data.counter end)
+  end
+
+  defp find_path(endpoints, request_path) do
+    Enum.take_while(endpoints, fn({nd, data}) -> path_exist?(data.paths, request_path)end)
+  end
+
+  defp path_exist?(paths, request_path) do
+    Enum.any?(paths, fn(path) -> path  == request_path end)
+  end
+
+  match _ do
+    send_resp(conn, 404, "oops")
+  end
 end
