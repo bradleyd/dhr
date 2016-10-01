@@ -8,9 +8,9 @@ defmodule Router.Registry do
     GenServer.start_link(__MODULE__, @table_name, name: __MODULE__)
   end
 
-  def init(table) do
+  def init(table_name) do
+    table = :ets.new(table_name, [:set, :named_table])
     :net_kernel.monitor_nodes(true)
-    table = :ets.new(@table_name, [:set, :named_table])
     {:ok, %{name: table}}
   end
 
@@ -34,24 +34,11 @@ defmodule Router.Registry do
   # for example, {"/info", [%{name: :"foo@127.0.0.1", counter: 0}, %{name: :"bar@127.0.0.1", counter: 0}]}
   def add_endpoint({key, payload}) do
     data = {key, %{paths: payload, counter: 0}}
-    #data =
-    #case :ets.lookup(@table_name, key) do
-    #  [{^key, endpoints}] ->
-    #    # does endpont already exist
-    #     eps =
-    #     case Enum.find(endpoints, fn(ep) -> ep.name == payload.name end) do
-    #       nil -> [ payload | endpoints]
-    #       data -> data
-    #     end
-    #    {key, eps}
-    #  [] -> {key, [payload]}
-    #end
-
     GenServer.call(__MODULE__, {:insert, data})
   end
 
   def endpoints do
-    GenServer.call(__MODULE__, {:all})
+    GenServer.call(__MODULE__, :all)
   end
 
   def update(key, new_data) do
@@ -62,26 +49,23 @@ defmodule Router.Registry do
     GenServer.call(__MODULE__, {:lookup, key})
   end
 
-  defp find(_, :"$end_of_table", acc) do
-    {:ok, List.delete(acc, :"$end_of_table") |> Enum.sort}
-  end
+  #defp find(_, :"$end_of_table", acc) do
+  #  {:ok, List.delete(acc, :"$end_of_table") |> Enum.sort}
+  #end
 
-  defp find(table, nil, acc) do
-    next = :ets.first(table)
-    find(table, next, [next|acc])
-  end
+  #defp find(table, nil, acc) do
+  #  next = :ets.first(table)
+  #  find(table, next, [next|acc])
+  #end
 
-  defp find(table, thing, acc) do
-    next = :ets.next(table, thing)
-    find(table, next, [next|acc])
-  end
+  #defp find(table, thing, acc) do
+  #  next = :ets.next(table, thing)
+  #  find(table, next, [next|acc])
+  #end
 
   def handle_call(:all_endpoints, _from, state) do
     results = :ets.select(state.name, [{{:"$1", :"$2"}, [], [{{:"$1", :"$2"}}]}])
     {:reply, results, state}
-  end
-  def handle_call({:all}, _from, state) do
-    {:reply, find(state.name, nil, []), state}
   end
   def handle_call({:insert, payload}, _from, state) do
     results =
@@ -128,7 +112,6 @@ defmodule Router.Registry do
   end
   def handle_info({:nodeup, node_name}, state) do
     Logger.warn("node #{node_name} is up")
-    results =
     case :ets.insert(state.name, {node_name, []}) do
       :ok -> {:ok, "inserted"}
       _ ->   {:error}
