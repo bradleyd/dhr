@@ -14,13 +14,15 @@ defmodule Router.Proxy do
 
     endpoint =
     find_path(nodes_and_paths, conn.request_path)
-    |> load_balance
+    Logger.info(inspect(endpoint))
+    endpoint = load_balance(endpoint)
 
     result =
     case endpoint do
       {:error, error_message} ->
         [code: 404, message: "request path not found, #{error_message}"]
       {endpoint, data} ->
+        Logger.info(inspect(endpoint))
         update_counter_for_endpoint(endpoint)
         forward_request(endpoint, conn.params)
     end
@@ -54,7 +56,7 @@ defmodule Router.Proxy do
   end
 
   defp find_path(endpoints, request_path) do
-    Enum.take_while(endpoints, fn({nd, data}) -> path_exist?(data.paths, request_path)end)
+    Enum.filter(endpoints, fn({nd, data}) -> path_exist?(data.paths, request_path)end)
   end
 
   defp path_exist?(paths, request_path) do
